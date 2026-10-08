@@ -2,6 +2,7 @@ package pfcp
 
 import (
 	"net"
+	"os"
 
 	"github.com/pkg/errors"
 	"github.com/wmnsk/go-pfcp/ie"
@@ -361,6 +362,9 @@ func (s *PfcpServer) handleSessionModificationRequest(
 	for _, i := range req.RemoveFAR {
 		p, err1 := sess.ValidateRemoveFAR(i, plan)
 		if err1 != nil {
+			if err1 == ErrRuleNotFound && os.Getenv("QOS_LAB_IFB") != "" {
+				continue
+			}
 			sess.log.Errorf("Mod ValidateRemoveFAR error: %v", err1)
 			cause := pfcpCauseFromError(err1)
 			s.sendSessModFailRsp(req, sess, addr, cause)
@@ -372,6 +376,9 @@ func (s *PfcpServer) handleSessionModificationRequest(
 	for _, i := range req.RemoveQER {
 		p, err1 := sess.ValidateRemoveQER(i, plan)
 		if err1 != nil {
+			if err1 == ErrRuleNotFound && os.Getenv("QOS_LAB_IFB") != "" {
+				continue
+			}
 			sess.log.Errorf("Mod ValidateRemoveQER error: %v", err1)
 			cause := pfcpCauseFromError(err1)
 			s.sendSessModFailRsp(req, sess, addr, cause)
@@ -383,6 +390,9 @@ func (s *PfcpServer) handleSessionModificationRequest(
 	for _, i := range req.RemoveURR {
 		p, err1 := sess.ValidateRemoveURR(i, plan)
 		if err1 != nil {
+			if err1 == ErrRuleNotFound && os.Getenv("QOS_LAB_IFB") != "" {
+				continue
+			}
 			sess.log.Errorf("Mod ValidateRemoveURR error: %v", err1)
 			cause := pfcpCauseFromError(err1)
 			s.sendSessModFailRsp(req, sess, addr, cause)
@@ -405,6 +415,9 @@ func (s *PfcpServer) handleSessionModificationRequest(
 	for _, i := range req.RemovePDR {
 		p, err1 := sess.ValidateRemovePDR(i, plan)
 		if err1 != nil {
+			if err1 == ErrRuleNotFound && os.Getenv("QOS_LAB_IFB") != "" {
+				continue
+			}
 			sess.log.Errorf("Mod ValidateRemovePDR error: %v", err1)
 			cause := pfcpCauseFromError(err1)
 			s.sendSessModFailRsp(req, sess, addr, cause)
@@ -426,6 +439,8 @@ func (s *PfcpServer) handleSessionModificationRequest(
 	execResult, err1 := sess.rnode.driver.ExecuteModificationPlan(plan)
 	if err1 != nil {
 		s.log.Errorf("Execute Modification Plan err: %v", err1)
+		s.sendSessModFailRsp(req, sess, addr, ie.CauseRuleCreationModificationFailure)
+		return
 	}
 
 	// ========================================================================

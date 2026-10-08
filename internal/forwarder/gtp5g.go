@@ -31,6 +31,7 @@ const (
 )
 
 type Gtp5g struct {
+	lab      *labHTB
 	mux      *nl.Mux
 	link     *Gtp5gLink
 	conn     *nl.Conn
@@ -116,6 +117,11 @@ func OpenGtp5g(wg *sync.WaitGroup, addr string, mtu uint32) (*Gtp5g, error) {
 	}
 	g.ps = ps
 
+	g.lab, err = openLabHTB()
+	if err != nil {
+		g.Close()
+		return nil, err
+	}
 	g.log.Infof("Forwarder started")
 	return g, nil
 }
@@ -1713,18 +1719,24 @@ func (g *Gtp5g) BuildRemoveBARPlan(lSeid uint64, req *ie.IE) (*BARPlan, error) {
 
 // ExecuteModificationPlan executes all operations in the plan
 // Uses best-effort execution: continues on failure, logs errors
-func (g *Gtp5g) ExecuteModificationPlan(plan *ModificationPlan) (*ExecutionResult, error) {
+func (g *Gtp5g) executeModificationPlan(plan *ModificationPlan) (*ExecutionResult, error) {
 	result := NewExecutionResult()
 
 	for _, p := range plan.CreateFARs {
 		if err := gtp5gnl.CreateFAROID(g.client, g.link.link, p.OID, p.Attrs); err != nil {
 			g.log.Errorf("ExecuteModificationPlan: CreateFAR[%#x] failed: %v", p.FARID, err)
+			if g.lab != nil {
+				return result, err
+			}
 		}
 	}
 
 	for _, p := range plan.CreateQERs {
 		if err := gtp5gnl.CreateQEROID(g.client, g.link.link, p.OID, p.Attrs); err != nil {
 			g.log.Errorf("ExecuteModificationPlan: CreateQER[%#x] failed: %v", p.QERID, err)
+			if g.lab != nil {
+				return result, err
+			}
 		}
 	}
 
@@ -1734,30 +1746,45 @@ func (g *Gtp5g) ExecuteModificationPlan(plan *ModificationPlan) (*ExecutionResul
 		}
 		if err := gtp5gnl.CreateURROID(g.client, g.link.link, p.OID, p.Attrs); err != nil {
 			g.log.Errorf("ExecuteModificationPlan: CreateURR[%#x] failed: %v", p.URRID, err)
+			if g.lab != nil {
+				return result, err
+			}
 		}
 	}
 
 	for _, p := range plan.CreateBARs {
 		if err := gtp5gnl.CreateBAROID(g.client, g.link.link, p.OID, p.Attrs); err != nil {
 			g.log.Errorf("ExecuteModificationPlan: CreateBAR[%#x] failed: %v", p.BARID, err)
+			if g.lab != nil {
+				return result, err
+			}
 		}
 	}
 
 	for _, p := range plan.CreatePDRs {
 		if err := gtp5gnl.CreatePDROID(g.client, g.link.link, p.OID, p.Attrs); err != nil {
 			g.log.Errorf("ExecuteModificationPlan: CreatePDR[%#x] failed: %v", p.PDRID, err)
+			if g.lab != nil {
+				return result, err
+			}
 		}
 	}
 
 	for _, p := range plan.RemovePDRs {
 		if err := gtp5gnl.RemovePDROID(g.client, g.link.link, p.OID); err != nil {
 			g.log.Errorf("ExecuteModificationPlan: RemovePDR[%#x] failed: %v", p.PDRID, err)
+			if g.lab != nil {
+				return result, err
+			}
 		}
 	}
 
 	for _, p := range plan.RemoveBARs {
 		if err := gtp5gnl.RemoveBAROID(g.client, g.link.link, p.OID); err != nil {
 			g.log.Errorf("ExecuteModificationPlan: RemoveBAR[%#x] failed: %v", p.BARID, err)
+			if g.lab != nil {
+				return result, err
+			}
 		}
 	}
 
@@ -1766,6 +1793,9 @@ func (g *Gtp5g) ExecuteModificationPlan(plan *ModificationPlan) (*ExecutionResul
 		rs, err := gtp5gnl.RemoveURROID(g.client, g.link.link, p.OID)
 		if err != nil {
 			g.log.Errorf("ExecuteModificationPlan: RemoveURR[%#x] failed: %v", p.URRID, err)
+			if g.lab != nil {
+				return result, err
+			}
 		}
 		for _, r := range rs {
 			result.USAReports = append(result.USAReports, g.convertUSAReport(r))
@@ -1775,18 +1805,27 @@ func (g *Gtp5g) ExecuteModificationPlan(plan *ModificationPlan) (*ExecutionResul
 	for _, p := range plan.RemoveQERs {
 		if err := gtp5gnl.RemoveQEROID(g.client, g.link.link, p.OID); err != nil {
 			g.log.Errorf("ExecuteModificationPlan: RemoveQER[%#x] failed: %v", p.QERID, err)
+			if g.lab != nil {
+				return result, err
+			}
 		}
 	}
 
 	for _, p := range plan.RemoveFARs {
 		if err := gtp5gnl.RemoveFAROID(g.client, g.link.link, p.OID); err != nil {
 			g.log.Errorf("ExecuteModificationPlan: RemoveFAR[%#x] failed: %v", p.FARID, err)
+			if g.lab != nil {
+				return result, err
+			}
 		}
 	}
 
 	for _, p := range plan.UpdateFARs {
 		if err := gtp5gnl.UpdateFAROID(g.client, g.link.link, p.OID, p.Attrs); err != nil {
 			g.log.Errorf("ExecuteModificationPlan: UpdateFAR[%#x] failed: %v", p.FARID, err)
+			if g.lab != nil {
+				return result, err
+			}
 		}
 
 		if p.ApplyAction != nil {
@@ -1797,6 +1836,9 @@ func (g *Gtp5g) ExecuteModificationPlan(plan *ModificationPlan) (*ExecutionResul
 	for _, p := range plan.UpdateQERs {
 		if err := gtp5gnl.UpdateQEROID(g.client, g.link.link, p.OID, p.Attrs); err != nil {
 			g.log.Errorf("ExecuteModificationPlan: UpdateQER[%#x] failed: %v", p.QERID, err)
+			if g.lab != nil {
+				return result, err
+			}
 		}
 	}
 
@@ -1804,6 +1846,9 @@ func (g *Gtp5g) ExecuteModificationPlan(plan *ModificationPlan) (*ExecutionResul
 		rs, err := gtp5gnl.UpdateURROID(g.client, g.link.link, p.OID, p.Attrs)
 		if err != nil {
 			g.log.Errorf("ExecuteModificationPlan: UpdateURR[%#x] failed: %v", p.URRID, err)
+			if g.lab != nil {
+				return result, err
+			}
 		}
 		for _, r := range rs {
 			result.USAReports = append(result.USAReports, g.convertUSAReport(r))
@@ -1813,12 +1858,18 @@ func (g *Gtp5g) ExecuteModificationPlan(plan *ModificationPlan) (*ExecutionResul
 	for _, p := range plan.UpdateBARs {
 		if err := gtp5gnl.UpdateBAROID(g.client, g.link.link, p.OID, p.Attrs); err != nil {
 			g.log.Errorf("ExecuteModificationPlan: UpdateBAR[%#x] failed: %v", p.BARID, err)
+			if g.lab != nil {
+				return result, err
+			}
 		}
 	}
 
 	for _, p := range plan.UpdatePDRs {
 		if err := gtp5gnl.UpdatePDROID(g.client, g.link.link, p.OID, p.Attrs); err != nil {
 			g.log.Errorf("ExecuteModificationPlan: UpdatePDR[%#x] failed: %v", p.PDRID, err)
+			if g.lab != nil {
+				return result, err
+			}
 		}
 	}
 
@@ -1827,6 +1878,9 @@ func (g *Gtp5g) ExecuteModificationPlan(plan *ModificationPlan) (*ExecutionResul
 		rs, err := gtp5gnl.GetReportOID(g.client, g.link.link, p.OID)
 		if err != nil {
 			g.log.Errorf("ExecuteModificationPlan: QueryURR[%#x] failed: %v", p.QueryURRID, err)
+			if g.lab != nil {
+				return result, err
+			}
 			continue
 		}
 		for _, r := range rs {
@@ -1839,7 +1893,7 @@ func (g *Gtp5g) ExecuteModificationPlan(plan *ModificationPlan) (*ExecutionResul
 
 // ExecuteEstablishmentPlan executes Create operations for session establishment.
 // Uses fail-fast semantics: returns error on first failure.
-func (g *Gtp5g) ExecuteEstablishmentPlan(plan *ModificationPlan) (*ExecutionResult, error) {
+func (g *Gtp5g) executeEstablishmentPlan(plan *ModificationPlan) (*ExecutionResult, error) {
 	result := NewExecutionResult()
 
 	for _, p := range plan.CreateFARs {
